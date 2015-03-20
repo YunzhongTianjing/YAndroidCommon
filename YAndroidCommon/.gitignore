@@ -1,0 +1,14 @@
+.settings
+assets
+bin
+gen
+libs
+.classpath
+.project
+proguard-project.txt
+project.properties
+
+!res
+!src
+!.gitignore
+!AndroidManifest.xml
