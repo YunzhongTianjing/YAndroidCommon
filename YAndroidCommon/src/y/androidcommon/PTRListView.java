@@ -1,5 +1,7 @@
 package y.androidcommon;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.animation.ValueAnimator.AnimatorUpdateListener;
 import android.annotation.SuppressLint;
@@ -7,16 +9,27 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
-import android.widget.LinearLayout;
+import android.view.animation.AccelerateInterpolator;
+import android.widget.FrameLayout;
 import android.widget.ListView;
 
 @SuppressLint("ClickableViewAccessibility")
 public class PTRListView extends ListView {
-
-	private View mHeaderContentView;
+	private static final int DURATION_FOLD_BASE_ANIMATION = 800;
 
 	private int mInitHeaderMarginTop;
+	private View mHeaderContentView;
+	private ViewGroup mHeaderFrameView;
+
+	private float mDownY;
+	private float mPreMoveY;
+	private float mScrollNotDragOffset;
+
+	private ValueAnimator mCurAnimator;
+
+	private boolean mDragging;
 
 	public PTRListView(Context context, AttributeSet attrs, int defStyleAttr) {
 		super(context, attrs, defStyleAttr);
@@ -35,10 +48,10 @@ public class PTRListView extends ListView {
 
 	private void init() {
 		setVerticalFadingEdgeEnabled(false);
-		final View headOutterView = View.inflate(getContext(),
-				R.layout.headview, null);
-		mHeaderContentView = headOutterView.findViewById(R.id.tv);
-		addHeaderView(headOutterView, null, false);
+		mHeaderFrameView = new FrameLayout(getContext());
+		addHeaderView(mHeaderFrameView, null, false);
+		// XXX
+		setRefreshPromptView(R.layout.headview);
 
 		getViewTreeObserver().addOnGlobalLayoutListener(
 				new OnGlobalLayoutListener() {
@@ -54,20 +67,19 @@ public class PTRListView extends ListView {
 				});
 	}
 
-	private float mDownY;
-	private float mPreMoveY;
-
-	private float mScrollNotDragOffset;
-
 	@Override
 	public boolean onTouchEvent(MotionEvent ev) {
 		switch (ev.getAction()) {
 		case MotionEvent.ACTION_DOWN:
 			mDownY = mPreMoveY = ev.getY();
 			mScrollNotDragOffset = 0;
+			foldHeaderView(mInitHeaderMarginTop);
 			return super.onTouchEvent(ev);
 
 		case MotionEvent.ACTION_MOVE: {
+			if (null != mCurAnimator)
+				return true;
+
 			final float curMoveY = ev.getY();
 			final float deltaMoveY = curMoveY - mPreMoveY;
 			mPreMoveY = curMoveY;
@@ -82,18 +94,25 @@ public class PTRListView extends ListView {
 						return drag(curMoveY);
 
 					mScrollNotDragOffset += deltaMoveY;
+					mDragging = false;
 					return super.onTouchEvent(ev);
 				}
 
 				mScrollNotDragOffset += deltaMoveY;
+				mDragging = false;
 				return super.onTouchEvent(ev);
 			}
-			return super.onTouchEvent(ev);
+			// code below no execute chance
+			throw new RuntimeException("strange");
 		}
 
 		case MotionEvent.ACTION_UP:
 		case MotionEvent.ACTION_CANCEL:
-			foldHeaderView();
+			mDragging = false;
+			if (getHeadViewMarginTop() < 0)
+				foldHeaderView(mInitHeaderMarginTop);// 完全收起
+			else
+				foldHeaderView(0);// 悬停刷新
 			return super.onTouchEvent(ev);
 
 		default:
@@ -102,6 +121,7 @@ public class PTRListView extends ListView {
 	}
 
 	private boolean drag(final float curY) {
+		mDragging = true;
 		/*
 		 * curY -
 		 * downY包含两部分：1.滚动的(当down时列表第一个可见条目不是0，这是交给系统处理滚动listview，这部分的scrollY应该予以刨除
@@ -115,40 +135,64 @@ public class PTRListView extends ListView {
 		return true;
 	}
 
-	private void foldHeaderView() {
-		final LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) mHeaderContentView
-				.getLayoutParams();
-		final int startMargin = params.topMargin;
-		final ValueAnimator animator = ValueAnimator.ofInt(startMargin,
-				mInitHeaderMarginTop).setDuration(120);
-		animator.addUpdateListener(new AnimatorUpdateListener() {
+	private void foldHeaderView(final int endMarginTop) {
+		if (null != mCurAnimator)
+			return;
+
+		if (mDragging)
+			return;
+
+		final int startMargin = getHeadViewMarginTop();
+		if (endMarginTop == startMargin)
+			return;
+
+		final float duration = DURATION_FOLD_BASE_ANIMATION
+				* (startMargin - endMarginTop) / getHeight();
+		mCurAnimator = ValueAnimator.ofInt(startMargin, endMarginTop)
+				.setDuration((long) duration);
+		mCurAnimator.setInterpolator(new AccelerateInterpolator());
+		mCurAnimator.addUpdateListener(new AnimatorUpdateListener() {
 			@Override
 			public void onAnimationUpdate(ValueAnimator animation) {
 				int curMargin = (Integer) animation.getAnimatedValue();
-				LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) mHeaderContentView
-						.getLayoutParams();
-				params.topMargin = curMargin;
-				mHeaderContentView.setLayoutParams(params);
+				setHeadViewMarginTop(curMargin);
 			}
 		});
-		animator.start();
+		mCurAnimator.addListener(new AnimatorListenerAdapter() {
+			@Override
+			public void onAnimationEnd(Animator animation) {
+				mCurAnimator = null;
+			}
+		});
+		mCurAnimator.start();
 	}
 
 	private void setHeadViewMarginTop(float newMarginTop) {
-		LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) mHeaderContentView
+		FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mHeaderContentView
 				.getLayoutParams();
 		params.topMargin = (int) newMarginTop;
 		mHeaderContentView.setLayoutParams(params);
 	}
 
 	private int getHeadViewMarginTop() {
-		LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) mHeaderContentView
+		FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mHeaderContentView
 				.getLayoutParams();
 		return params.topMargin;
 	}
 
 	private int getHeadViewHeight() {
 		return getHeadViewMarginTop() - mInitHeaderMarginTop;
+	}
+
+	public void setRefreshPromptView(int layoutId) {
+		mHeaderContentView = View.inflate(getContext(), layoutId, null);
+
+		mHeaderFrameView.removeAllViews();
+		mHeaderFrameView.addView(mHeaderContentView);
+	}
+
+	public void notifyCompleteRefresh() {
+		foldHeaderView(mInitHeaderMarginTop);
 	}
 
 }

@@ -12,7 +12,7 @@
         android:layout_height="50dp"
         android:layout_gravity="center"
         android:gravity="center"
-        android:text="树下"
+        android:text="下拉刷新"
         android:textSize="30dp" />
 
 </LinearLayout>
