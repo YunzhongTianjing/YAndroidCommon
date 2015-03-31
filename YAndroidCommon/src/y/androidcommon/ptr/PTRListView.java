@@ -1,4 +1,4 @@
-package y.androidcommon;
+package y.androidcommon.ptr;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
@@ -17,6 +17,17 @@ import android.widget.ListView;
 
 @SuppressLint("ClickableViewAccessibility")
 public class PTRListView extends ListView {
+	public static interface IUIPullHandler {
+		void onUIStartRefresh();
+
+		void onUIPullViewHeightChange(boolean byUser, int oldHeight,
+				int currentHeight, float oldPercent, float currentPercent);
+	}
+
+	public static interface IOnPullListener {
+		void onStartRefresh();
+	}
+
 	private static final int DURATION_FOLD_BASE_ANIMATION = 800;
 
 	private int mInitHeaderMarginTop;
@@ -30,6 +41,10 @@ public class PTRListView extends ListView {
 	private ValueAnimator mCurAnimator;
 
 	private boolean mDragging;
+
+	private IUIPullHandler uiHandler;
+
+	private IOnPullListener lsn;
 
 	public PTRListView(Context context, AttributeSet attrs, int defStyleAttr) {
 		super(context, attrs, defStyleAttr);
@@ -51,7 +66,9 @@ public class PTRListView extends ListView {
 		mHeaderFrameView = new FrameLayout(getContext());
 		addHeaderView(mHeaderFrameView, null, false);
 		// XXX
-		setRefreshPromptView(R.layout.headview);
+		DefaultUIPullHandler prompt = new DefaultUIPullHandler(getContext());
+		setPullPromptView(prompt);
+		setUIPullHandler(prompt);
 
 		getViewTreeObserver().addOnGlobalLayoutListener(
 				new OnGlobalLayoutListener() {
@@ -59,7 +76,7 @@ public class PTRListView extends ListView {
 					@Override
 					public void onGlobalLayout() {
 						mInitHeaderMarginTop = -mHeaderContentView.getHeight();
-						setHeadViewMarginTop(mInitHeaderMarginTop);
+						setHeadViewMarginTop(mInitHeaderMarginTop, false);
 						// only record once
 						getViewTreeObserver()
 								.removeGlobalOnLayoutListener(this);
@@ -131,7 +148,7 @@ public class PTRListView extends ListView {
 		float marginTop = deltaY / 2 + mInitHeaderMarginTop;// 位移减半，阻尼效果
 		marginTop = marginTop < mInitHeaderMarginTop ? mInitHeaderMarginTop
 				: marginTop;
-		setHeadViewMarginTop(marginTop);
+		setHeadViewMarginTop(marginTop, true);
 		return true;
 	}
 
@@ -155,23 +172,35 @@ public class PTRListView extends ListView {
 			@Override
 			public void onAnimationUpdate(ValueAnimator animation) {
 				int curMargin = (Integer) animation.getAnimatedValue();
-				setHeadViewMarginTop(curMargin);
+				setHeadViewMarginTop(curMargin, false);
 			}
 		});
 		mCurAnimator.addListener(new AnimatorListenerAdapter() {
 			@Override
 			public void onAnimationEnd(Animator animation) {
 				mCurAnimator = null;
+				if (0 == endMarginTop) {
+					if (null != uiHandler)
+						uiHandler.onUIStartRefresh();
+					if (null != lsn)
+						lsn.onStartRefresh();
+				}
 			}
 		});
 		mCurAnimator.start();
 	}
 
-	private void setHeadViewMarginTop(float newMarginTop) {
-		FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mHeaderContentView
+	private void setHeadViewMarginTop(float newMarginTop, boolean byUser) {
+		final FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mHeaderContentView
 				.getLayoutParams();
+		final int preHeaderViewHeight = getHeadViewHeight();
 		params.topMargin = (int) newMarginTop;
 		mHeaderContentView.setLayoutParams(params);
+
+		// XXX
+		if (null != uiHandler)
+			uiHandler.onUIPullViewHeightChange(byUser, preHeaderViewHeight,
+					getHeadViewHeight(), 0, 0);
 	}
 
 	private int getHeadViewMarginTop() {
@@ -184,8 +213,8 @@ public class PTRListView extends ListView {
 		return getHeadViewMarginTop() - mInitHeaderMarginTop;
 	}
 
-	public void setRefreshPromptView(int layoutId) {
-		mHeaderContentView = View.inflate(getContext(), layoutId, null);
+	public void setPullPromptView(View promptView) {
+		mHeaderContentView = promptView;
 
 		mHeaderFrameView.removeAllViews();
 		mHeaderFrameView.addView(mHeaderContentView);
@@ -195,4 +224,11 @@ public class PTRListView extends ListView {
 		foldHeaderView(mInitHeaderMarginTop);
 	}
 
+	public void setUIPullHandler(IUIPullHandler onPullListener) {
+		this.uiHandler = onPullListener;
+	}
+
+	public void setOnPullListener(IOnPullListener onPullListener) {
+		this.lsn = onPullListener;
+	}
 }
